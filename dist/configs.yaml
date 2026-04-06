@@ -1,0 +1,129 @@
+manager:
+  - name: Shutdown Warning 5 Minutes
+    section: Messages
+    key: shutdown_5min
+    type: str
+    default: Server is shutting down in 5 minutes
+    help: "Message broadcasted to players 5 minutes before shutdown."
+  - name: Shutdown Warning 4 Minutes
+    section: Messages
+    key: shutdown_4min
+    type: str
+    default: Server is shutting down in 4 minutes
+    help: "Message broadcasted to players 4 minutes before shutdown."
+  - name: Shutdown Warning 3 Minutes
+    section: Messages
+    key: shutdown_3min
+    type: str
+    default: Server is shutting down in 3 minutes
+    help: "Message broadcasted to players 3 minutes before shutdown."
+  - name: Shutdown Warning 2 Minutes
+    section: Messages
+    key: shutdown_2min
+    type: str
+    default: Server is shutting down in 2 minutes
+    help: "Message broadcasted to players 2 minutes before shutdown."
+  - name: Shutdown Warning 1 Minute
+    section: Messages
+    key: shutdown_1min
+    type: str
+    default: Server is shutting down in 1 minute
+    help: "Message broadcasted to players 1 minute before shutdown."
+  - name: Shutdown Warning 30 Seconds
+    section: Messages
+    key: shutdown_30sec
+    type: str
+    default: Server is shutting down in 30 seconds!
+    help: "Message broadcasted to players 30 seconds before shutdown."
+  - name: Shutdown Warning NOW
+    section: Messages
+    key: shutdown_now
+    type: str
+    default: Server is shutting down NOW!
+    help: "Message broadcasted to players immediately before shutdown."
+  - name: Instance Started (Discord)
+    section: Messages
+    key: map_started
+    type: str
+    default: "{instance} has started! :rocket:"
+    help: "Message sent to Discord when the server starts. Use '{instance}' for the service name."
+  - name: Instance Stopping (Discord)
+    section: Messages
+    key: map_stopping
+    type: str
+    default: ":small_red_triangle_down: {instance} is shutting down"
+    help: "Message sent to Discord when the server stops. Use '{instance}' for the service name."
+
+game:
+  - name: server name
+    key: server name
+    type: str
+    default: My ASKA Server
+    section: game
+    help: "The host name displayed in the session browser. Leave blank to use the machine hostname."
+  - name: display name
+    key: display name
+    type: str
+    default: Default Session
+    section: game
+    help: "The session display name shown in the browser for new saves."
+  - name: steam game port
+    key: steam game port
+    type: int
+    default: 27015
+    section: game
+    help: "The port clients connect to for gameplay (UDP)."
+  - name: steam query port
+    key: steam query port
+    type: int
+    default: 27016
+    section: game
+    help: "The port used for Steam server browser queries (UDP)."
+  - name: password
+    key: password
+    type: str
+    default: ""
+    section: game
+    help: "Password required to join the server. Leave blank for no password."
+  - name: authentication token
+    key: authentication token
+    type: str
+    default: ""
+    section: game
+    help: "Steam Game Server Login Token from steamcommunity.com/dev/managegameservers (App ID 1898300). Required for public server listing."
+  - name: region
+    key: region
+    type: str
+    default: default
+    section: game
+    help: "Server region for matchmaking. Options: default, asia, japan, europe, south america, south korea, usa east, usa west, australia, canada east, hong kong, india, turkey, united arab emirates, usa south central."
+  - name: keep server world alive
+    key: keep server world alive
+    type: bool
+    default: false
+    section: game
+    help: "If true, the world continues running even when no players are connected."
+  - name: autosave style
+    key: autosave style
+    type: str
+    default: every morning
+    section: game
+    help: "Autosave frequency. Options: disabled, every morning, every 5 minutes, every 10 minutes, every 15 minutes, every 20 minutes."
+  - name: save id
+    key: save id
+    type: str
+    default: ""
+    section: game
+    help: "Save file to load (the part after 'savegame_' in the filename). Leave blank to start a new save."
+  - name: seed
+    key: seed
+    type: str
+    default: ""
+    section: game
+    help: "World generation seed for new saves."
+  - name: mode
+    key: mode
+    type: str
+    default: normal
+    section: game
+    help: "Game mode. Options: normal, custom."
