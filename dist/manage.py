@@ -24,7 +24,10 @@ sys.path.insert(
 	)
 )
 
+import glob
 import logging
+import pwd
+import subprocess
 import time
 from warlock_manager.apps.steam_app import SteamApp, guess_steamcmd_path
 from warlock_manager.services.base_service import BaseService
@@ -72,11 +75,18 @@ class GameApp(SteamApp):
 		# Download ASKA server files via SteamCMD (Windows depot)
 		self.update()
 
-		# Initialize the Wine prefix for the game user so the server can start cleanly
+		# Initialize the Wine prefix.  Wine 11's new WoW64 mode does not populate
+		# C:\windows\syswow64 during wineboot; _init_wine() handles that manually.
+		wineprefix_dir = os.path.join(utils.get_app_directory(), 'wineprefix')
+		if not os.path.exists(wineprefix_dir):
+			os.makedirs(wineprefix_dir)
+			game_uid = pwd.getpwnam(utils.get_app_uid()).pw_uid
+			os.chown(wineprefix_dir, game_uid, game_uid)
 		self._init_wine()
 
-		# Create a default server properties file if one doesn't exist yet
-		props_path = os.path.join(utils.get_app_directory(), 'server properties.txt')
+		# SteamCMD ships a server properties.txt in AppFiles with the correct format.
+		# Only create a fallback if it was somehow absent after download.
+		props_path = os.path.join(utils.get_app_directory(), 'AppFiles', 'server properties.txt')
 		if not os.path.exists(props_path):
 			self._create_default_properties(props_path)
 
@@ -150,28 +160,71 @@ class GameApp(SteamApp):
 		return cmd.success
 
 	def _init_wine(self):
-		"""Initialize the Wine prefix for the game user via a virtual display."""
-		logging.info('Initializing Wine prefix...')
-		cmd = Cmd(['xvfb-run', '-a', 'wineboot', '--init'])
-		cmd.sudo(utils.get_app_uid())
+		"""
+		Initialize the Wine prefix and populate syswow64 for WoW64 support.
+
+		Wine 11's new WoW64 mode creates C:\\windows\\syswow64 during wineboot
+		but leaves it empty. The 32-bit WoW64 thunk (start.exe) needs kernel32
+		and other i386 DLLs from that directory to bootstrap any Wine process —
+		including 64-bit ones. Without them every 'wine <app>.exe' call fails
+		immediately with 'could not load kernel32.dll'. We symlink the Wine
+		installation's i386-windows DLLs in after wineboot completes.
+		"""
+		wineprefix_dir = os.path.join(utils.get_app_directory(), 'wineprefix')
+		syswow64 = os.path.join(wineprefix_dir, 'drive_c', 'windows', 'syswow64')
+
+		if os.path.exists(syswow64) and os.listdir(syswow64):
+			logging.info('Wine prefix already initialized, skipping wineboot.')
+			return
+
+		logging.info('Initializing Wine prefix via wineboot (this may take a few minutes)...')
+		home_dir = os.path.expanduser('~' + utils.get_app_uid())
 		try:
-			cmd.run()
+			subprocess.run(
+				[
+					'sudo', '-u', utils.get_app_uid(), 'env',
+					'WINEPREFIX=' + wineprefix_dir,
+					'WINEDEBUG=-all',
+					'HOME=' + home_dir,
+					'xvfb-run', '-a', 'wineboot', '--init',
+				],
+				timeout=600,
+			)
 		except Exception as e:
-			# Wine prefix init may produce Xlib warnings in headless mode but
-			# those are non-fatal; the first server start will complete setup.
-			logging.warning('Wine prefix init produced an error (may be non-fatal): %s' % e)
+			logging.warning('wineboot produced an error (may be non-fatal): %s' % e)
+
+		# Locate the Wine i386-windows DLL directory via the wine binary's realpath.
+		wine_bin = os.path.realpath('/usr/bin/wine')
+		i386_windows = os.path.normpath(
+			os.path.join(os.path.dirname(wine_bin), '..', 'lib', 'wine', 'i386-windows')
+		)
+		if not os.path.exists(i386_windows):
+			i386_windows = '/usr/lib/wine/i386-windows'
+
+		if os.path.exists(syswow64) and os.path.exists(i386_windows):
+			for src in glob.glob(os.path.join(i386_windows, '*.dll')) + glob.glob(os.path.join(i386_windows, '*.exe')):
+				dst = os.path.join(syswow64, os.path.basename(src))
+				if not os.path.exists(dst):
+					os.symlink(src, dst)
+			logging.info('Populated syswow64 with Wine i386 DLLs from %s.' % i386_windows)
+		elif not os.path.exists(syswow64):
+			logging.warning('syswow64 not found after wineboot; Wine prefix may be incomplete.')
+		else:
+			logging.warning('Wine i386-windows dir not found at %s; syswow64 not populated.' % i386_windows)
 
 	def _create_default_properties(self, path: str):
-		"""Write a default server properties file."""
+		"""Write a minimal default server properties file in ASKA's native format."""
 		content = (
-			'Server Name=ASKA Server\n'
-			'Password=\n'
-			'Steam game port=27015\n'
-			'Steam query port=27016\n'
-			'Authentication token=\n'
-			'keep server world alive=false\n'
-			'Autosave frequency=10 min\n'
-			'Max Players=8\n'
+			'display name = Default Session\n'
+			'server name = My ASKA Server\n'
+			'save id =\n'
+			'password =\n'
+			'steam game port = 27015\n'
+			'steam query port = 27016\n'
+			'authentication token =\n'
+			'region = default\n'
+			'keep server world alive = false\n'
+			'autosave style = every morning\n'
 		)
 		with open(path, 'w') as f:
 			f.write(content)
@@ -182,14 +235,16 @@ class GameService(BaseService):
 	"""
 	ASKA service instance manager.
 
-	Wraps AskaServer.exe (Windows binary) under xvfb-run + Wine.
+	Runs AskaServer.exe via Wine under a virtual display (xvfb-run).
 	ASKA has no RCON or HTTP API, so player count is unavailable.
 	"""
 
 	def __init__(self, service: str, game: GameApp):
 		super().__init__(service, game)
+		# The properties file lives inside AppFiles, which is the WorkingDirectory
+		# for the service. self.get_app_directory() returns that AppFiles path.
 		self.configs = {
-			'game': PropertiesConfig('game', os.path.join(utils.get_app_directory(), 'server properties.txt'))
+			'game': PropertiesConfig('game', os.path.join(self.get_app_directory(), 'server properties.txt'))
 		}
 		self.load()
 
@@ -197,27 +252,43 @@ class GameService(BaseService):
 		"""
 		Return the ExecStart string for the systemd unit.
 
-		xvfb-run -a auto-selects a free virtual display number, avoiding
-		conflicts with other Xvfb instances on the host.
-		The -propertiesPath argument uses an absolute path because the
-		filename contains a space ('server properties.txt').
+		xvfb-run is required because Wine's background subsystem (explorer.exe etc.)
+		still attempts to create windows even in -nographics mode.
+
+		Both the exe and -propertiesPath are relative to WorkingDirectory (AppFiles),
+		matching the layout the shipped AskaServer.bat uses.
 		"""
-		exe = os.path.join(self.get_app_directory(), 'AskaServer.exe')
-		props = os.path.join(utils.get_app_directory(), 'server properties.txt')
-		return f"/usr/bin/xvfb-run -a /usr/bin/wine {exe} -nographics -batchmode -propertiesPath '{props}'"
+		return (
+			'xvfb-run -a wine AskaServer.exe'
+			' -nographics -batchmode'
+			' -propertiesPath "server properties.txt"'
+		)
+
+	def get_environment(self) -> dict:
+		"""Return the env vars required by Wine."""
+		wineprefix_dir = os.path.join(utils.get_app_directory(), 'wineprefix')
+		return {
+			'WINEPREFIX': wineprefix_dir,
+			'WINEARCH': 'win64',
+			'WINEDEBUG': '-all',
+		}
 
 	def is_api_enabled(self) -> bool:
 		return False
+
+	def is_port_open(self) -> bool | None:
+		# warlock-manager's base is_port_open() passes the raw string from
+		# PropertiesConfig to get_listening_port() which expects an int, causing
+		# a TypeError. Returning None tells post_start to skip the port check.
+		return None
 
 	def get_player_count(self) -> int | None:
 		# ASKA has no queryable API; return None (unknown) rather than 0 (empty).
 		return None
 
-	def get_player_max(self) -> int | None:
-		return self.get_option_value('Max Players')
-
 	def get_port(self) -> int | None:
-		return self.get_option_value('Steam game port')
+		val = self.get_option_value('steam game port')
+		return int(val) if val else None
 
 	def get_game_pid(self) -> int:
 		"""
@@ -243,27 +314,27 @@ class GameService(BaseService):
 		return pid
 
 	def get_name(self) -> str:
-		return self.get_option_value('Server Name')
+		return self.get_option_value('server name')
 
 	def get_port_definitions(self) -> list:
 		return [
-			('Steam game port', 'udp', '%s game port' % self.game.name),
-			('Steam query port', 'udp', '%s Steam query port' % self.game.name),
+			('steam game port', 'udp', '%s game port' % self.game.name),
+			('steam query port', 'udp', '%s Steam query port' % self.game.name),
 		]
 
 	def option_value_updated(self, option: str, previous_value, new_value):
-		if option == 'Steam game port':
+		if option == 'steam game port':
 			if previous_value:
 				Firewall.remove(int(previous_value), 'udp')
 			Firewall.allow(int(new_value), 'udp', '%s game port' % self.game.desc)
-		elif option == 'Steam query port':
+		elif option == 'steam query port':
 			if previous_value:
 				Firewall.remove(int(previous_value), 'udp')
 			Firewall.allow(int(new_value), 'udp', '%s Steam query port' % self.game.desc)
 
 	def create_service(self):
 		super().create_service()
-		self.set_option('Server Name', 'My ASKA Server')
+		self.set_option('server name', 'My ASKA Server')
 
 
 if __name__ == '__main__':
