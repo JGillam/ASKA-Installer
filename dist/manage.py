@@ -295,26 +295,24 @@ class GameService(BaseService):
 
 	def get_game_pid(self) -> int:
 		"""
-		The systemd MainPID is xvfb-run. Walk its child processes to find
-		the wine process for accurate memory/CPU metric reporting.
+		The systemd MainPID is xvfb-run, but AskaServer.exe runs as a Wine
+		process that ends up directly under systemd in the cgroup rather than
+		as a child of xvfb-run. Scan /proc cmdlines to find it directly.
 		"""
-		pid = self.get_pid()
-		if pid == 0:
-			return 0
 		try:
-			import subprocess
-			result = subprocess.run(
-				['pgrep', '-P', str(pid), '-f', 'wine'],
-				stdout=subprocess.PIPE,
-				stderr=subprocess.PIPE,
-				timeout=5
-			)
-			for line in result.stdout.decode().strip().split('\n'):
-				if line.strip().isdigit():
-					return int(line.strip())
+			for entry in os.listdir('/proc'):
+				if not entry.isdigit():
+					continue
+				try:
+					with open(f'/proc/{entry}/cmdline', 'rb') as f:
+						cmdline = f.read().replace(b'\x00', b' ').decode('utf-8', errors='ignore')
+					if cmdline.split()[0].endswith('AskaServer.exe'):
+						return int(entry)
+				except Exception:
+					continue
 		except Exception:
 			pass
-		return pid
+		return self.get_pid()
 
 	def get_name(self) -> str:
 		return self.get_option_value('server name')
