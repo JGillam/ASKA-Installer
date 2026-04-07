@@ -283,7 +283,7 @@ class GameService(BaseService):
 		return None
 
 	def get_player_max(self) -> int | None:
-		return 8
+		return 4
 
 	def get_player_count(self) -> int | None:
 		# ASKA has no queryable API; return None (unknown) rather than 0 (empty).
